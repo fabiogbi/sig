@@ -8,6 +8,7 @@ import Estoque from './pages/Estoque'
 import Compras from './pages/Compras'
 import Financeiro from './pages/Financeiro'
 import { Revenda, Cadastros, Relatorios, Assistente } from './pages/Pages'
+import Importacao from './pages/Importacao'
 
 const MODULES = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
@@ -17,6 +18,7 @@ const MODULES = [
   { id: 'revenda', label: 'Revenda', icon: '🏷️' },
   { id: 'cadastros', label: 'Cadastros', icon: '🗂️' },
   { id: 'relatorios', label: 'Relatórios', icon: '📋' },
+  { id: 'importacao', label: 'Importar Excel', icon: '📥' },
   { id: 'assistente', label: 'Assistente IA', icon: '🤖' },
 ]
 
@@ -59,6 +61,7 @@ export default function App() {
       case 'revenda': return <Revenda {...pageProps} />
       case 'cadastros': return <Cadastros {...pageProps} />
       case 'relatorios': return <Relatorios {...pageProps} />
+      case 'importacao': return <Importacao reload={reload} showToast={showToast} />
       case 'assistente': return <Assistente {...pageProps} />
       default: return null
     }
