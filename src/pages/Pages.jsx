@@ -1,12 +1,37 @@
 import { useState } from 'react'
 import { Card, DataTable, Badge, Btn, Input, Grid, Tabs, Modal, fmt, fmtN, fmtDate } from '../components/ui'
 
+// ─── CONFIRM DELETE MODAL ───────────────────────────────────
+function ConfirmModal({ msg, onConfirm, onClose }) {
+  return (
+    <Modal title="Confirmar Exclusão" onClose={onClose} width={400}>
+      <p style={{ color: '#94a3b8', fontSize: 14, margin: '0 0 20px' }}>{msg}</p>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Btn onClick={onConfirm} color="#ef4444">🗑️ Excluir</Btn>
+        <Btn onClick={onClose} color="#475569">Cancelar</Btn>
+      </div>
+    </Modal>
+  )
+}
+
+// ─── ACTION BUTTONS ─────────────────────────────────────────
+function Actions({ onEdit, onDelete, editLabel = 'Editar', deleteLabel = 'Excluir' }) {
+  return (
+    <div style={{ display: 'flex', gap: 4 }}>
+      {onEdit && <Btn small onClick={onEdit} color="#3b82f6">{editLabel}</Btn>}
+      {onDelete && <Btn small onClick={onDelete} color="#ef4444">{deleteLabel}</Btn>}
+    </div>
+  )
+}
+
 // ─── REVENDA ────────────────────────────────────────────────
 export function Revenda({ data, ops, showToast }) {
   const { produtos, estoque, clientes, pedidos_venda } = data
   const [tab, setTab] = useState('pedidos')
   const [loading, setLoading] = useState(false)
   const [pv, setPv] = useState({ id_cliente: '', id_produto: '', qtd: '', preco_unit: '' })
+  const [editPv, setEditPv] = useState(null)
+  const [confirmDel, setConfirmDel] = useState(null)
 
   const emitir = async () => {
     if (!pv.id_cliente || !pv.id_produto || !pv.qtd || !pv.preco_unit) return showToast('Preencha todos os campos!', 'error')
@@ -26,6 +51,14 @@ export function Revenda({ data, ops, showToast }) {
       showToast(`Faturado! ${nf} emitida. Conta a receber gerada.`)
     } catch (e) { showToast(e.message, 'error') }
     setLoading(false)
+  }
+
+  const cancelar = async (id) => {
+    try {
+      await ops.cancelarPV(id)
+      showToast('Pedido cancelado.')
+      setConfirmDel(null)
+    } catch (e) { showToast(e.message, 'error') }
   }
 
   const prodSel = pv.id_produto ? produtos.find(p => p.id === Number(pv.id_produto)) : null
@@ -52,9 +85,10 @@ export function Revenda({ data, ops, showToast }) {
           )}
           <div style={{ marginTop: 14 }}><Btn onClick={emitir} disabled={loading}>🏷️ Criar Pedido</Btn></div>
         </Card>
+
         <Card title="Pedidos de Venda">
           <DataTable
-            headers={['PV', 'Cliente', 'Produto', 'Qtd', 'Preço Unit.', 'Total', 'Data', 'Status', 'NF', 'Ação']}
+            headers={['PV', 'Cliente', 'Produto', 'Qtd', 'Preço Unit.', 'Total', 'Data', 'Status', 'NF', 'Ações']}
             rows={pedidos_venda.map(p => {
               const c = clientes.find(x => x.id === p.id_cliente)
               const pr = produtos.find(x => x.id === p.id_produto)
@@ -63,9 +97,14 @@ export function Revenda({ data, ops, showToast }) {
                 fmtN(p.qtd, 0), fmt(p.preco_unit), fmt(p.qtd * p.preco_unit),
                 fmtDate(p.data || p.created_at), <Badge key={p.id} status={p.status} />,
                 p.nf || <span key={p.id} style={{ color: '#475569' }}>—</span>,
-                p.status === 'RESERVADO'
-                  ? <Btn key={p.id} small onClick={() => faturar(p.id)} color="#10b981" disabled={loading}>Faturar</Btn>
-                  : <span key={p.id} style={{ fontSize: 11, color: '#34d399' }}>✅</span>,
+                <div key={p.id} style={{ display: 'flex', gap: 4 }}>
+                  {p.status === 'RESERVADO' && <>
+                    <Btn small onClick={() => faturar(p.id)} color="#10b981" disabled={loading}>Faturar</Btn>
+                    <Btn small onClick={() => setConfirmDel({ id: p.id, msg: `Cancelar pedido PV-${String(p.id).padStart(4,'0')}?` })} color="#ef4444">Cancelar</Btn>
+                  </>}
+                  {p.status === 'FATURADO' && <span style={{ fontSize: 11, color: '#34d399' }}>✅ Faturado</span>}
+                  {p.status === 'CANCELADA' && <span style={{ fontSize: 11, color: '#f87171' }}>❌ Cancelado</span>}
+                </div>,
               ]
             })}
           />
@@ -87,6 +126,8 @@ export function Revenda({ data, ops, showToast }) {
           />
         </Card>
       )}
+
+      {confirmDel && <ConfirmModal msg={confirmDel.msg} onConfirm={() => cancelar(confirmDel.id)} onClose={() => setConfirmDel(null)} />}
     </div>
   )
 }
@@ -97,6 +138,9 @@ export function Cadastros({ data, ops, showToast }) {
   const [tab, setTab] = useState('produtos')
   const [loading, setLoading] = useState(false)
   const [editProd, setEditProd] = useState(null)
+  const [editForn, setEditForn] = useState(null)
+  const [editCli, setEditCli] = useState(null)
+  const [confirmDel, setConfirmDel] = useState(null)
   const [prodForm, setProdForm] = useState({ sku: '', descricao: '', id_categoria: '', custo_medio: '', preco_revenda: '', markup: '', unidade_compra: 'UN', unidade_venda: 'UN', conversao: '1' })
   const [fornForm, setFornForm] = useState({ nome: '', cnpj: '', email: '', fone: '', lead_time: '' })
   const [cliForm, setCliForm] = useState({ nome: '', cnpj: '', email: '', fone: '', limite_credito: '', tabela_preco: 'A' })
@@ -122,6 +166,14 @@ export function Cadastros({ data, ops, showToast }) {
     setLoading(false)
   }
 
+  const delProd = async (id) => {
+    try {
+      await ops.deleteProduto(id)
+      setConfirmDel(null)
+      showToast('Produto excluído!')
+    } catch (e) { showToast(e.message, 'error'); setConfirmDel(null) }
+  }
+
   const addForn = async () => {
     if (!fornForm.nome || !fornForm.cnpj) return showToast('Nome e CNPJ obrigatórios!', 'error')
     setLoading(true)
@@ -133,6 +185,24 @@ export function Cadastros({ data, ops, showToast }) {
     setLoading(false)
   }
 
+  const saveForn = async () => {
+    setLoading(true)
+    try {
+      await ops.updateFornecedor(editForn.id, { nome: editForn.nome, cnpj: editForn.cnpj, email: editForn.email, fone: editForn.fone, lead_time: Number(editForn.lead_time) })
+      setEditForn(null)
+      showToast('Fornecedor atualizado!')
+    } catch (e) { showToast(e.message, 'error') }
+    setLoading(false)
+  }
+
+  const delForn = async (id) => {
+    try {
+      await ops.deleteFornecedor(id)
+      setConfirmDel(null)
+      showToast('Fornecedor excluído!')
+    } catch (e) { showToast(e.message, 'error'); setConfirmDel(null) }
+  }
+
   const addCli = async () => {
     if (!cliForm.nome || !cliForm.cnpj) return showToast('Nome e CNPJ obrigatórios!', 'error')
     setLoading(true)
@@ -142,6 +212,24 @@ export function Cadastros({ data, ops, showToast }) {
       showToast('Cliente cadastrado!')
     } catch (e) { showToast(e.message, 'error') }
     setLoading(false)
+  }
+
+  const saveCli = async () => {
+    setLoading(true)
+    try {
+      await ops.updateCliente(editCli.id, { nome: editCli.nome, cnpj: editCli.cnpj, email: editCli.email, fone: editCli.fone, limite_credito: Number(editCli.limite_credito), tabela_preco: editCli.tabela_preco })
+      setEditCli(null)
+      showToast('Cliente atualizado!')
+    } catch (e) { showToast(e.message, 'error') }
+    setLoading(false)
+  }
+
+  const delCli = async (id) => {
+    try {
+      await ops.deleteCliente(id)
+      setConfirmDel(null)
+      showToast('Cliente excluído!')
+    } catch (e) { showToast(e.message, 'error'); setConfirmDel(null) }
   }
 
   return (
@@ -167,7 +255,15 @@ export function Cadastros({ data, ops, showToast }) {
             headers={['SKU', 'Descrição', 'Categoria', 'Custo Médio', 'Preço Revenda', 'Un.', 'Ações']}
             rows={produtos.map(p => {
               const cat = categorias.find(c => c.id === p.id_categoria)
-              return [<b key={p.id} style={{ color: '#60a5fa', fontSize: 12 }}>{p.sku}</b>, p.descricao, cat?.nome || '-', fmt(p.custo_medio), fmt(p.preco_revenda), `${p.unidade_compra}→${p.unidade_venda}`, <Btn key={p.id} small onClick={() => setEditProd({ ...p })}>Editar</Btn>]
+              return [
+                <b key={p.id} style={{ color: '#60a5fa', fontSize: 12 }}>{p.sku}</b>,
+                p.descricao, cat?.nome || '-', fmt(p.custo_medio), fmt(p.preco_revenda),
+                `${p.unidade_compra}→${p.unidade_venda}`,
+                <Actions key={p.id}
+                  onEdit={() => setEditProd({ ...p })}
+                  onDelete={() => setConfirmDel({ id: p.id, tipo: 'produto', msg: `Excluir produto "${p.descricao}"? Esta ação não pode ser desfeita.` })}
+                />,
+              ]
             })}
           />
         </Card>
@@ -185,8 +281,16 @@ export function Cadastros({ data, ops, showToast }) {
           <div style={{ marginTop: 14 }}><Btn onClick={addForn} disabled={loading}>✅ Cadastrar Fornecedor</Btn></div>
         </Card>
         <Card title="Fornecedores">
-          <DataTable headers={['ID', 'Razão Social', 'CNPJ', 'E-mail', 'Telefone', 'Lead Time']}
-            rows={fornecedores.map(f => [`F-${String(f.id).padStart(3,'0')}`, f.nome, f.cnpj, f.email, f.fone, `${f.lead_time} dias`])} />
+          <DataTable
+            headers={['ID', 'Razão Social', 'CNPJ', 'E-mail', 'Telefone', 'Lead Time', 'Ações']}
+            rows={fornecedores.map(f => [
+              `F-${String(f.id).padStart(3,'0')}`, f.nome, f.cnpj, f.email, f.fone, `${f.lead_time} dias`,
+              <Actions key={f.id}
+                onEdit={() => setEditForn({ ...f })}
+                onDelete={() => setConfirmDel({ id: f.id, tipo: 'fornecedor', msg: `Excluir fornecedor "${f.nome}"?` })}
+              />,
+            ])}
+          />
         </Card>
       </>)}
 
@@ -203,11 +307,21 @@ export function Cadastros({ data, ops, showToast }) {
           <div style={{ marginTop: 14 }}><Btn onClick={addCli} disabled={loading}>✅ Cadastrar Cliente</Btn></div>
         </Card>
         <Card title="Clientes">
-          <DataTable headers={['ID', 'Razão Social', 'CNPJ', 'E-mail', 'Limite Crédito', 'Tabela']}
-            rows={clientes.map(c => [`C-${String(c.id).padStart(3,'0')}`, c.nome, c.cnpj, c.email, fmt(c.limite_credito), <span key={c.id} style={{ background: '#3b82f620', color: '#60a5fa', borderRadius: 4, padding: '2px 8px', fontSize: 11 }}>Tabela {c.tabela_preco}</span>])} />
+          <DataTable
+            headers={['ID', 'Razão Social', 'CNPJ', 'E-mail', 'Limite Crédito', 'Tabela', 'Ações']}
+            rows={clientes.map(c => [
+              `C-${String(c.id).padStart(3,'0')}`, c.nome, c.cnpj, c.email, fmt(c.limite_credito),
+              <span key={c.id} style={{ background: '#3b82f620', color: '#60a5fa', borderRadius: 4, padding: '2px 8px', fontSize: 11 }}>Tabela {c.tabela_preco}</span>,
+              <Actions key={c.id}
+                onEdit={() => setEditCli({ ...c })}
+                onDelete={() => setConfirmDel({ id: c.id, tipo: 'cliente', msg: `Excluir cliente "${c.nome}"?` })}
+              />,
+            ])}
+          />
         </Card>
       </>)}
 
+      {/* EDIT PRODUTO */}
       {editProd && (
         <Modal title="Editar Produto" onClose={() => setEditProd(null)}>
           <Grid>
@@ -219,10 +333,58 @@ export function Cadastros({ data, ops, showToast }) {
             <Input label="Markup (%)" value={editProd.markup} onChange={v => setEditProd({ ...editProd, markup: v })} type="number" step="0.1" />
           </Grid>
           <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-            <Btn onClick={saveProd} disabled={loading}>Salvar</Btn>
+            <Btn onClick={saveProd} disabled={loading}>💾 Salvar</Btn>
             <Btn onClick={() => setEditProd(null)} color="#475569">Cancelar</Btn>
           </div>
         </Modal>
+      )}
+
+      {/* EDIT FORNECEDOR */}
+      {editForn && (
+        <Modal title="Editar Fornecedor" onClose={() => setEditForn(null)}>
+          <Grid>
+            <Input label="Razão Social" value={editForn.nome} onChange={v => setEditForn({ ...editForn, nome: v })} />
+            <Input label="CNPJ" value={editForn.cnpj} onChange={v => setEditForn({ ...editForn, cnpj: v })} />
+            <Input label="E-mail" value={editForn.email} onChange={v => setEditForn({ ...editForn, email: v })} type="email" />
+            <Input label="Telefone" value={editForn.fone} onChange={v => setEditForn({ ...editForn, fone: v })} />
+            <Input label="Lead Time (dias)" value={editForn.lead_time} onChange={v => setEditForn({ ...editForn, lead_time: v })} type="number" />
+          </Grid>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <Btn onClick={saveForn} disabled={loading}>💾 Salvar</Btn>
+            <Btn onClick={() => setEditForn(null)} color="#475569">Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* EDIT CLIENTE */}
+      {editCli && (
+        <Modal title="Editar Cliente" onClose={() => setEditCli(null)}>
+          <Grid>
+            <Input label="Razão Social" value={editCli.nome} onChange={v => setEditCli({ ...editCli, nome: v })} />
+            <Input label="CNPJ" value={editCli.cnpj} onChange={v => setEditCli({ ...editCli, cnpj: v })} />
+            <Input label="E-mail" value={editCli.email} onChange={v => setEditCli({ ...editCli, email: v })} type="email" />
+            <Input label="Telefone" value={editCli.fone} onChange={v => setEditCli({ ...editCli, fone: v })} />
+            <Input label="Limite de Crédito (R$)" value={editCli.limite_credito} onChange={v => setEditCli({ ...editCli, limite_credito: v })} type="number" />
+            <Input label="Tabela de Preço" value={editCli.tabela_preco} onChange={v => setEditCli({ ...editCli, tabela_preco: v })} options={[{ value: 'A', label: 'Tabela A (Premium)' }, { value: 'B', label: 'Tabela B (Padrão)' }]} />
+          </Grid>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <Btn onClick={saveCli} disabled={loading}>💾 Salvar</Btn>
+            <Btn onClick={() => setEditCli(null)} color="#475569">Cancelar</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* CONFIRM DELETE */}
+      {confirmDel && (
+        <ConfirmModal
+          msg={confirmDel.msg}
+          onClose={() => setConfirmDel(null)}
+          onConfirm={() => {
+            if (confirmDel.tipo === 'produto') delProd(confirmDel.id)
+            else if (confirmDel.tipo === 'fornecedor') delForn(confirmDel.id)
+            else if (confirmDel.tipo === 'cliente') delCli(confirmDel.id)
+          }}
+        />
       )}
     </div>
   )
@@ -259,25 +421,23 @@ export function Relatorios({ data }) {
       </div>
 
       <Card title={rels.find(r => r.id === rel)?.label}>
-        {rel === 'posicao' && (
-          <>
-            <div style={{ marginBottom: 12 }}>
-              <select value={filtCat} onChange={e => setFiltCat(e.target.value)} style={{ background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', padding: '8px 12px', borderRadius: 8, fontSize: 13 }}>
-                <option value=''>Todas as Categorias</option>
-                {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-              </select>
-            </div>
-            <DataTable
-              headers={['SKU', 'Produto', 'Categoria', 'Custo Médio', 'Qtd Atual', 'Qtd Mín', 'Qtd Máx', 'Valor Estoque', 'NC']}
-              rows={estoque.filter(e => !filtCat || produtos.find(p => p.id === e.id_produto)?.id_categoria === Number(filtCat)).map(e => {
-                const p = produtos.find(x => x.id === e.id_produto)
-                const cat = categorias.find(c => c.id === p?.id_categoria)
-                const nc = calcNC(e)
-                return [p?.sku, p?.descricao, cat?.nome, fmt(p?.custo_medio), <b key={e.id_produto} style={{ color: e.qtd_atual <= e.qtd_min ? '#f87171' : '#e2e8f0' }}>{fmtN(e.qtd_atual, 0)}</b>, fmtN(e.qtd_min, 0), fmtN(e.qtd_max, 0), fmt((p?.custo_medio||0)*e.qtd_atual), nc > 0 ? <b key={e.id_produto} style={{ color: '#fbbf24' }}>{fmtN(nc,0)}</b> : '—']
-              })}
-            />
-          </>
-        )}
+        {rel === 'posicao' && (<>
+          <div style={{ marginBottom: 12 }}>
+            <select value={filtCat} onChange={e => setFiltCat(e.target.value)} style={{ background: '#0f172a', border: '1px solid #334155', color: '#e2e8f0', padding: '8px 12px', borderRadius: 8, fontSize: 13 }}>
+              <option value=''>Todas as Categorias</option>
+              {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </div>
+          <DataTable
+            headers={['SKU', 'Produto', 'Categoria', 'Custo Médio', 'Qtd Atual', 'Qtd Mín', 'Qtd Máx', 'Valor Estoque', 'NC']}
+            rows={estoque.filter(e => !filtCat || produtos.find(p => p.id === e.id_produto)?.id_categoria === Number(filtCat)).map(e => {
+              const p = produtos.find(x => x.id === e.id_produto)
+              const cat = categorias.find(c => c.id === p?.id_categoria)
+              const nc = calcNC(e)
+              return [p?.sku, p?.descricao, cat?.nome, fmt(p?.custo_medio), <b key={e.id_produto} style={{ color: e.qtd_atual <= e.qtd_min ? '#f87171' : '#e2e8f0' }}>{fmtN(e.qtd_atual, 0)}</b>, fmtN(e.qtd_min, 0), fmtN(e.qtd_max, 0), fmt((p?.custo_medio||0)*e.qtd_atual), nc > 0 ? <b key={e.id_produto} style={{ color: '#fbbf24' }}>{fmtN(nc,0)}</b> : '—']
+            })}
+          />
+        </>)}
 
         {rel === 'nc' && (
           <DataTable
@@ -348,35 +508,22 @@ export function Assistente({ data, fmt }) {
   const [prompt, setPrompt] = useState('')
   const [response, setResponse] = useState('')
   const [loading, setLoading] = useState(false)
-
   const { estoque, produtos, orcamento, pedidos_compra, pedidos_venda, contas_receber } = data
-
-  const calcSaldo = o => o.vl_total - o.vl_contratado - o.vl_executado
-  const calcNC = (e) => {
-    const pt = pedidos_compra.filter(p => p.id_produto === e.id_produto && p.status === 'AGUARDANDO_ENTREGA').reduce((s,p) => s+p.qtd, 0)
-    const dp = pedidos_venda.filter(p => p.id_produto === e.id_produto && p.status === 'RESERVADO').reduce((s,p) => s+p.qtd, 0)
-    return Math.max(0, (e.qtd_max - e.qtd_atual) + dp - pt)
-  }
 
   const callAI = async () => {
     if (!prompt.trim()) return
-    setLoading(true)
-    setResponse('')
+    setLoading(true); setResponse('')
     try {
       const summary = {
-        estoque: estoque.map(e => { const p = produtos.find(x => x.id === e.id_produto); return { produto: p?.descricao, qtd_atual: e.qtd_atual, qtd_min: e.qtd_min, nc: calcNC(e) } }),
-        orcamento: orcamento.map(o => ({ ...o, saldo: calcSaldo(o) })),
+        estoque: estoque.map(e => { const p = produtos.find(x => x.id === e.id_produto); const nc = Math.max(0,(e.qtd_max-e.qtd_atual)); return { produto: p?.descricao, qtd_atual: e.qtd_atual, qtd_min: e.qtd_min, nc } }),
+        orcamento: orcamento.map(o => ({ ...o, saldo: o.vl_total - o.vl_contratado - o.vl_executado })),
         pedidos_compra_abertos: pedidos_compra.filter(p => p.status === 'AGUARDANDO_ENTREGA').length,
         contas_abertas: contas_receber.filter(c => c.status === 'ABERTO').reduce((s,c) => s+c.valor, 0),
       }
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-6', max_tokens: 1000,
-          system: `Você é o assistente de gestão do SIG. Analise os dados e responda em português de forma objetiva. Dados: ${JSON.stringify(summary)}`,
-          messages: [{ role: 'user', content: prompt }],
-        }),
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1000, system: `Você é o assistente de gestão do SIG. Analise os dados e responda em português. Dados: ${JSON.stringify(summary)}`, messages: [{ role: 'user', content: prompt }] }),
       })
       const d = await res.json()
       setResponse(d.content?.[0]?.text || 'Sem resposta.')
@@ -384,13 +531,7 @@ export function Assistente({ data, fmt }) {
     setLoading(false)
   }
 
-  const sugestoes = [
-    'Quais produtos precisam de reposição urgente?',
-    'Analise a situação orçamentária atual.',
-    'Quais produtos têm margem abaixo do ideal?',
-    'Qual a saúde financeira geral do sistema?',
-    'Há pedidos de compra críticos em aberto?',
-  ]
+  const sugestoes = ['Quais produtos precisam de reposição urgente?', 'Analise a situação orçamentária atual.', 'Quais produtos têm margem abaixo do ideal?', 'Qual a saúde financeira geral do sistema?']
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -399,29 +540,24 @@ export function Assistente({ data, fmt }) {
           <div style={{ width: 44, height: 44, borderRadius: 12, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 }}>🤖</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16, color: '#f1f5f9' }}>Assistente de Gestão IA</div>
-            <div style={{ fontSize: 12, color: '#64748b' }}>Powered by Claude · Análise em tempo real dos dados do SIG</div>
+            <div style={{ fontSize: 12, color: '#64748b' }}>Powered by Claude · Análise em tempo real</div>
           </div>
         </div>
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>Sugestões:</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {sugestoes.map((s, i) => (
-              <button key={i} onClick={() => setPrompt(s)} style={{ background: '#334155', border: '1px solid #475569', color: '#cbd5e1', borderRadius: 8, padding: '5px 10px', fontSize: 11, cursor: 'pointer' }}>{s}</button>
-            ))}
+            {sugestoes.map((s, i) => <button key={i} onClick={() => setPrompt(s)} style={{ background: '#334155', border: '1px solid #475569', color: '#cbd5e1', borderRadius: 8, padding: '5px 10px', fontSize: 11, cursor: 'pointer' }}>{s}</button>)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Faça uma pergunta sobre estoque, orçamento, finanças..." style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: '12px 16px', color: '#e2e8f0', fontSize: 13, resize: 'vertical', minHeight: 70, fontFamily: 'inherit', outline: 'none' }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); callAI() } }} />
-          <button onClick={callAI} disabled={loading || !prompt.trim()} style={{ background: loading ? '#334155' : 'linear-gradient(135deg, #3b82f6, #8b5cf6)', border: 'none', borderRadius: 10, padding: '0 20px', color: '#fff', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 22 }}>
-            {loading ? '⏳' : '➤'}
-          </button>
+          <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Faça uma pergunta..." style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: '12px 16px', color: '#e2e8f0', fontSize: 13, resize: 'vertical', minHeight: 70, fontFamily: 'inherit', outline: 'none' }} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); callAI() } }} />
+          <button onClick={callAI} disabled={loading || !prompt.trim()} style={{ background: loading ? '#334155' : 'linear-gradient(135deg, #3b82f6, #8b5cf6)', border: 'none', borderRadius: 10, padding: '0 20px', color: '#fff', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 22 }}>{loading ? '⏳' : '➤'}</button>
         </div>
       </div>
       {(loading || response) && (
         <div style={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 12, padding: 20 }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 10, fontWeight: 600, textTransform: 'uppercase' }}>🤖 Resposta</div>
-          {loading
-            ? <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#64748b' }}><div style={{ width: 16, height: 16, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />Analisando os dados...</div>
+          {loading ? <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#64748b' }}><div style={{ width: 16, height: 16, border: '2px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />Analisando...</div>
             : <div style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{response}</div>}
         </div>
       )}
