@@ -1,133 +1,183 @@
-import { useState } from 'react'
-import { Card, DataTable, KPI, Badge, Btn, Input, Grid, Tabs, calcSaldoOrc, fmt, fmtN, fmtDate } from '../components/ui'
+import React, { useState } from 'react'
 
-export default function Financeiro({ data, ops, showToast }) {
-  const { orcamento, contas_receber, clientes } = data
-  const [tab, setTab] = useState('orcamento')
-  const [loading, setLoading] = useState(false)
-  const [orcForm, setOrcForm] = useState({ classe: '', descricao: '', vl_total: '' })
-  const [suplForm, setSuplForm] = useState({ id_orcamento: '', valor: '', justificativa: '' })
+const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : '—'
 
-  const addOrc = async () => {
-    if (!orcForm.classe || !orcForm.descricao || !orcForm.vl_total) return showToast('Preencha todos os campos!', 'error')
-    setLoading(true)
-    try {
-      await ops.addOrcamento({ classe: orcForm.classe, descricao: orcForm.descricao, vl_total: Number(orcForm.vl_total) })
-      setOrcForm({ classe: '', descricao: '', vl_total: '' })
-      showToast('Classe orçamentária criada!')
-    } catch (e) { showToast(e.message, 'error') }
-    setLoading(false)
+function ModalOrcamento({ orc, onSave, onClose }) {
+  const [form, setForm] = useState(orc || { codigo: '', descricao: '', valor_total: '', valor_contratado: 0, valor_executado: 0, ano: new Date().getFullYear() })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <div className="modal-header"><span className="modal-title">{orc ? 'Editar Classe' : 'Nova Classe Orçamentária'}</span><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Código</label><input className="input" value={form.codigo} onChange={e => set('codigo', e.target.value)} /></div>
+            <div className="form-group"><label className="form-label">Ano</label><input className="input" type="number" value={form.ano} onChange={e => set('ano', e.target.value)} /></div>
+          </div>
+          <div className="form-group"><label className="form-label">Descrição</label><input className="input" value={form.descricao} onChange={e => set('descricao', e.target.value)} /></div>
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Valor Total</label><input className="input" type="number" value={form.valor_total} onChange={e => set('valor_total', e.target.value)} /></div>
+            <div className="form-group"><label className="form-label">Valor Contratado</label><input className="input" type="number" value={form.valor_contratado} onChange={e => set('valor_contratado', e.target.value)} /></div>
+          </div>
+          <div className="form-group"><label className="form-label">Valor Executado</label><input className="input" type="number" value={form.valor_executado} onChange={e => set('valor_executado', e.target.value)} /></div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={() => { onSave(form); onClose() }}>Salvar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ModalSuplementar({ orc, onSave, onClose }) {
+  const [valor, setValor] = useState('')
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <div className="modal-header"><span className="modal-title">Suplementar: {orc.descricao}</span><button className="modal-close" onClick={onClose}>×</button></div>
+        <div className="modal-body">
+          <div className="form-group"><label className="form-label">Valor a Adicionar</label><input className="input" type="number" value={valor} onChange={e => setValor(e.target.value)} autoFocus /></div>
+          <p className="text-muted">Total atual: {fmt(orc.valor_total)} → Novo total: {fmt((orc.valor_total || 0) + Number(valor || 0))}</p>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={() => { onSave({ ...orc, valor_total: (orc.valor_total || 0) + Number(valor || 0) }); onClose() }}>Confirmar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function Financeiro({ data }) {
+  const { orcamento, contasReceber, clientes, loading, addOrcamento, updateOrcamento, deleteOrcamento, updateContaReceber, deleteContaReceber } = data
+  const [tab, setTab] = useState(0)
+  const [modalOrc, setModalOrc] = useState(null)
+  const [modalSupl, setModalSupl] = useState(null)
+  const [err, setErr] = useState('')
+
+  const totalOrc = orcamento.reduce((s, o) => s + (o.valor_total || 0), 0)
+  const totalContratado = orcamento.reduce((s, o) => s + (o.valor_contratado || 0), 0)
+  const totalExecutado = orcamento.reduce((s, o) => s + (o.valor_executado || 0), 0)
+  const saldoGeral = totalOrc - totalContratado
+  const crAberto = contasReceber.filter(c => c.status === 'aberto').reduce((s, c) => s + (c.valor || 0), 0)
+  const crRecebido = contasReceber.filter(c => c.status === 'recebido').reduce((s, c) => s + (c.valor || 0), 0)
+
+  const saveOrc = async (form) => {
+    try { if (form.id) await updateOrcamento(form.id, form); else await addOrcamento(form) }
+    catch (e) { setErr(e.message) }
   }
-
-  const suplementar = async () => {
-    if (!suplForm.id_orcamento || !suplForm.valor) return showToast('Preencha os campos!', 'error')
-    setLoading(true)
-    try {
-      await ops.suplementarOrcamento({ id_orcamento: Number(suplForm.id_orcamento), valor: Number(suplForm.valor) })
-      setSuplForm({ id_orcamento: '', valor: '', justificativa: '' })
-      showToast('Suplementação aprovada!')
-    } catch (e) { showToast(e.message, 'error') }
-    setLoading(false)
+  const delOrc = async (o) => {
+    if ((o.valor_contratado || 0) > 0) return alert('Não é possível excluir uma classe com valor contratado.')
+    if (window.confirm('Excluir esta classe?')) { try { await deleteOrcamento(o.id) } catch (e) { setErr(e.message) } }
   }
+  const baixarCR = async (cr) => { try { await updateContaReceber(cr.id, { status: 'recebido' }) } catch (e) { setErr(e.message) } }
+  const delCR = async (id) => { if (window.confirm('Excluir?')) { try { await deleteContaReceber(id) } catch (e) { setErr(e.message) } } }
 
-  const baixar = async (id) => {
-    try {
-      await ops.baixarConta(id)
-      showToast('Conta baixada com sucesso!')
-    } catch (e) { showToast(e.message, 'error') }
-  }
+  const isVencido = (cr) => cr.status === 'aberto' && cr.data_vencimento && new Date(cr.data_vencimento) < new Date()
 
-  const totalOrc = orcamento.reduce((s, o) => s + o.vl_total, 0)
-  const totalExec = orcamento.reduce((s, o) => s + o.vl_executado, 0)
-  const totalContr = orcamento.reduce((s, o) => s + o.vl_contratado, 0)
+  if (loading) return <div className="empty-state"><p>Carregando...</p></div>
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs active={tab} onChange={setTab} tabs={[
-        { id: 'orcamento', label: 'Orçamento' },
-        { id: 'contas', label: 'Contas a Receber' },
-        { id: 'suplementacao', label: 'Suplementação' },
-      ]} />
+    <div>
+      {err && <div className="login-error mb-16">{err}</div>}
+      <div className="tabs">
+        {['Orçamento', 'Contas a Receber'].map((t, i) => (
+          <button key={i} className={`tab ${tab === i ? 'tab-active' : ''}`} onClick={() => setTab(i)}>{t}</button>
+        ))}
+      </div>
 
-      {tab === 'orcamento' && (<>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
-          <KPI label="Orç. Total" value={fmt(totalOrc)} color="#60a5fa" />
-          <KPI label="Contratado" value={fmt(totalContr)} color="#f59e0b" />
-          <KPI label="Executado" value={fmt(totalExec)} color="#3b82f6" />
-          <KPI label="Saldo" value={fmt(totalOrc - totalExec - totalContr)} color="#34d399" />
-        </div>
-        <Card title="Situação por Classe Orçamentária">
-          <DataTable
-            headers={['Classe', 'Descrição', 'Orç. Total', 'Contratado', 'Executado', 'Saldo', '% Exec.', '% Comprometido']}
-            rows={orcamento.map(o => {
-              const saldo = calcSaldoOrc(o)
-              const percExec = (o.vl_executado / o.vl_total) * 100
-              const percCompr = ((o.vl_executado + o.vl_contratado) / o.vl_total) * 100
-              const cor = saldo < 0 ? '#f87171' : percCompr > 90 ? '#fbbf24' : '#34d399'
-              return [
-                <b key={o.id} style={{ color: '#60a5fa' }}>{o.classe}</b>,
-                o.descricao,
-                fmt(o.vl_total),
-                <span key={o.id} style={{ color: '#f59e0b' }}>{fmt(o.vl_contratado)}</span>,
-                <span key={o.id} style={{ color: '#3b82f6' }}>{fmt(o.vl_executado)}</span>,
-                <b key={o.id} style={{ color: saldo < 0 ? '#f87171' : '#34d399' }}>{fmt(saldo)}</b>,
-                `${fmtN(percExec, 1)}%`,
-                <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 70, height: 6, background: '#0f172a', borderRadius: 3 }}>
-                    <div style={{ width: `${Math.min(percCompr, 100)}%`, height: '100%', background: cor, borderRadius: 3 }} />
-                  </div>
-                  <b style={{ color: cor, fontSize: 12 }}>{fmtN(percCompr, 1)}%</b>
-                </div>,
-              ]
-            })}
-          />
-        </Card>
-        <Card title="Nova Classe Orçamentária">
-          <Grid cols={3}>
-            <Input label="Código *" value={orcForm.classe} onChange={v => setOrcForm({ ...orcForm, classe: v })} placeholder="Ex: 1.5" />
-            <Input label="Descrição *" value={orcForm.descricao} onChange={v => setOrcForm({ ...orcForm, descricao: v })} placeholder="Nome da classe" />
-            <Input label="Orçamento Total (R$) *" value={orcForm.vl_total} onChange={v => setOrcForm({ ...orcForm, vl_total: v })} type="number" min="0" />
-          </Grid>
-          <div style={{ marginTop: 14 }}><Btn onClick={addOrc} disabled={loading}>✅ Criar Classe</Btn></div>
-        </Card>
-      </>)}
-
-      {tab === 'contas' && (
-        <Card title="Contas a Receber">
-          <DataTable
-            headers={['ID', 'Cliente', 'NF', 'Valor', 'Vencimento', 'Status', 'Ação']}
-            rows={contas_receber.map(c => {
-              const cli = clientes.find(x => x.id === c.id_cliente)
-              const vencido = new Date(c.vencimento) < new Date() && c.status === 'ABERTO'
-              return [
-                `CR-${String(c.id).padStart(4,'0')}`,
-                cli?.nome || '-',
-                c.nf,
-                fmt(c.valor),
-                <span key={c.id} style={{ color: vencido ? '#f87171' : '#e2e8f0' }}>{fmtDate(c.vencimento)}</span>,
-                <Badge key={c.id} status={vencido ? 'VENCIDO' : c.status} />,
-                c.status === 'ABERTO'
-                  ? <Btn key={c.id} small onClick={() => baixar(c.id)}>Baixar</Btn>
-                  : <span key={c.id} style={{ color: '#34d399', fontSize: 12 }}>✅ Pago</span>,
-              ]
-            })}
-          />
-        </Card>
-      )}
-
-      {tab === 'suplementacao' && (
-        <Card title="Suplementação Orçamentária">
-          <div style={{ background: '#f59e0b10', border: '1px solid #f59e0b30', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#fbbf24' }}>
-            ⚠️ A suplementação aumenta o teto da classe selecionada, liberando saldo para novas contratações.
+      {tab === 0 && (
+        <div>
+          <div className="kpi-grid">
+            <div className="kpi-card"><div className="kpi-label">Orçamento Total</div><div className="kpi-value">{fmt(totalOrc)}</div></div>
+            <div className="kpi-card"><div className="kpi-label">Contratado</div><div className="kpi-value">{fmt(totalContratado)}</div></div>
+            <div className="kpi-card"><div className="kpi-label">Executado</div><div className="kpi-value">{fmt(totalExecutado)}</div></div>
+            <div className="kpi-card"><div className="kpi-label">Saldo Disponível</div><div className={`kpi-value ${saldoGeral < 0 ? 'danger' : 'success'}`}>{fmt(saldoGeral)}</div></div>
           </div>
-          <Grid>
-            <Input label="Classe Orçamentária *" value={suplForm.id_orcamento} onChange={v => setSuplForm({ ...suplForm, id_orcamento: v })} options={orcamento.map(o => ({ value: o.id, label: `${o.classe} – ${o.descricao} (Saldo: ${fmt(calcSaldoOrc(o))})` }))} />
-            <Input label="Valor da Suplementação (R$) *" value={suplForm.valor} onChange={v => setSuplForm({ ...suplForm, valor: v })} type="number" min="0.01" />
-            <Input label="Justificativa" value={suplForm.justificativa} onChange={v => setSuplForm({ ...suplForm, justificativa: v })} placeholder="Motivo da suplementação..." span={2} />
-          </Grid>
-          <div style={{ marginTop: 14 }}><Btn onClick={suplementar} color="#f59e0b" disabled={loading}>✅ Aprovar Suplementação</Btn></div>
-        </Card>
+          <div className="card">
+            <div className="page-header" style={{ marginBottom: 16 }}>
+              <div className="section-title">Classes Orçamentárias</div>
+              <button className="btn btn-primary btn-sm" onClick={() => setModalOrc({})}>+ Nova Classe</button>
+            </div>
+            {orcamento.length === 0
+              ? <div className="empty-state"><p>Nenhuma classe cadastrada.</p></div>
+              : (
+                <div className="table-wrapper">
+                  <table className="table">
+                    <thead><tr><th>Código</th><th>Descrição</th><th>Ano</th><th>Total</th><th>Contratado</th><th>Executado</th><th>Saldo</th><th>% Exec.</th><th></th></tr></thead>
+                    <tbody>
+                      {orcamento.map(o => {
+                        const saldo = (o.valor_total || 0) - (o.valor_contratado || 0)
+                        const pct = o.valor_total > 0 ? ((o.valor_executado || 0) / o.valor_total * 100) : 0
+                        return (
+                          <tr key={o.id}>
+                            <td className="font-mono">{o.codigo}</td>
+                            <td>{o.descricao}</td>
+                            <td>{o.ano}</td>
+                            <td className="text-right">{fmt(o.valor_total)}</td>
+                            <td className="text-right">{fmt(o.valor_contratado)}</td>
+                            <td className="text-right">{fmt(o.valor_executado)}</td>
+                            <td className="text-right" style={{ color: saldo < 0 ? 'var(--danger)' : undefined }}>{fmt(saldo)}</td>
+                            <td><span className={`badge ${pct > 90 ? 'badge-danger' : pct > 70 ? 'badge-warning' : 'badge-success'}`}>{pct.toFixed(1)}%</span></td>
+                            <td><div className="actions">
+                              <button className="btn btn-secondary btn-xs" onClick={() => setModalOrc(o)}>Editar</button>
+                              <button className="btn btn-warning btn-xs" onClick={() => setModalSupl(o)}>Supl.</button>
+                              <button className="btn btn-danger btn-xs" onClick={() => delOrc(o)}>Excluir</button>
+                            </div></td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+          </div>
+        </div>
       )}
+
+      {tab === 1 && (
+        <div>
+          <div className="kpi-grid">
+            <div className="kpi-card"><div className="kpi-label">Em Aberto</div><div className="kpi-value">{fmt(crAberto)}</div></div>
+            <div className="kpi-card"><div className="kpi-label">Recebido</div><div className="kpi-value success">{fmt(crRecebido)}</div></div>
+          </div>
+          <div className="card">
+            <div className="section-title mb-16">Contas a Receber</div>
+            {contasReceber.length === 0
+              ? <div className="empty-state"><p>Nenhum lançamento.</p></div>
+              : (
+                <div className="table-wrapper">
+                  <table className="table">
+                    <thead><tr><th>Cliente</th><th>Valor</th><th>Vencimento</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                      {contasReceber.map(c => {
+                        const cli = clientes.find(x => x.id === c.cliente_id)
+                        const vencido = isVencido(c)
+                        return (
+                          <tr key={c.id}>
+                            <td>{cli ? cli.razao_social : '—'}</td>
+                            <td className="text-right">{fmt(c.valor)}</td>
+                            <td style={{ color: vencido ? 'var(--danger)' : undefined }}>{fmtDate(c.data_vencimento)}{vencido ? ' ⚠' : ''}</td>
+                            <td><span className={`badge ${c.status === 'recebido' ? 'badge-success' : vencido ? 'badge-danger' : 'badge-info'}`}>{vencido && c.status === 'aberto' ? 'vencido' : c.status}</span></td>
+                            <td><div className="actions">
+                              {c.status === 'aberto' && <button className="btn btn-success btn-xs" onClick={() => baixarCR(c)}>Baixar</button>}
+                              <button className="btn btn-danger btn-xs" onClick={() => delCR(c.id)}>Excluir</button>
+                            </div></td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+          </div>
+        </div>
+      )}
+
+      {modalOrc !== null && <ModalOrcamento orc={modalOrc.id ? modalOrc : null} onSave={saveOrc} onClose={() => setModalOrc(null)} />}
+      {modalSupl !== null && <ModalSuplementar orc={modalSupl} onSave={saveOrc} onClose={() => setModalSupl(null)} />}
     </div>
   )
 }

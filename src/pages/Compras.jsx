@@ -1,133 +1,271 @@
-import { useState } from 'react'
-import { Card, DataTable, Badge, Btn, Input, Grid, Tabs, calcSaldoOrc, fmt, fmtN, fmtDate } from '../components/ui'
+import React, { useState, useMemo } from 'react'
 
-export default function Compras({ data, ops, showToast }) {
-  const { produtos, fornecedores, orcamento, requisicoes, pedidos_compra } = data
-  const [tab, setTab] = useState('requisicoes')
-  const [loading, setLoading] = useState(false)
-  const [rc, setRc] = useState({ id_produto: '', qtd: '', solicitante: '', justificativa: '' })
-  const [pc, setPc] = useState({ id_requisicao: '', id_fornecedor: '', id_produto: '', qtd: '', preco_unit: '', id_orcamento: '' })
-  const [nf, setNf] = useState({ id_pc: '', nf: '', qtd_recebida: '', preco_real: '' })
+const fmt = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('pt-BR') : '—'
 
-  const emitirRC = async () => {
-    if (!rc.id_produto || !rc.qtd || !rc.solicitante) return showToast('Preencha os campos obrigatórios!', 'error')
-    setLoading(true)
-    try {
-      await ops.emitirRC({ id_produto: Number(rc.id_produto), qtd: Number(rc.qtd), solicitante: rc.solicitante, justificativa: rc.justificativa })
-      setRc({ id_produto: '', qtd: '', solicitante: '', justificativa: '' })
-      showToast('Requisição de Compra emitida!')
-    } catch (e) { showToast(e.message, 'error') }
-    setLoading(false)
+function StatusBadge({ status }) {
+  const map = { rascunho: 'badge-gray', aprovado: 'badge-info', comprado: 'badge-warning', emitido: 'badge-info', recebido: 'badge-success', cancelado: 'badge-danger' }
+  return <span className={`badge ${map[status] || 'badge-gray'}`}>{status || '—'}</span>
+}
+
+function ModalRC({ rc, produtos, onSave, onClose }) {
+  const [form, setForm] = useState(rc || { produto_id: '', quantidade: '', justificativa: '', status: 'rascunho' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">{rc ? 'Editar RC' : 'Nova RC'}</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">Produto</label>
+            <select className="select" value={form.produto_id} onChange={e => set('produto_id', e.target.value)}>
+              <option value="">Selecione...</option>
+              {produtos.map(p => <option key={p.id} value={p.id}>{p.sku} — {p.descricao}</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Quantidade</label>
+              <input className="input" type="number" value={form.quantidade} onChange={e => set('quantidade', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Status</label>
+              <select className="select" value={form.status} onChange={e => set('status', e.target.value)}>
+                <option value="rascunho">Rascunho</option>
+                <option value="aprovado">Aprovado</option>
+                <option value="comprado">Comprado</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Justificativa</label>
+            <textarea className="input" rows={3} value={form.justificativa} onChange={e => set('justificativa', e.target.value)} />
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={() => { onSave(form); onClose() }}>Salvar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ModalPC({ pc, fornecedores, orcamento, onSave, onClose }) {
+  const [form, setForm] = useState(pc || { numero: '', fornecedor_id: '', orcamento_id: '', status: 'rascunho', valor_total: '', data_emissao: '', data_entrega_prevista: '', nf_numero: '' })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">{pc ? 'Editar PC' : 'Novo PC'}</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Número</label>
+              <input className="input" value={form.numero} onChange={e => set('numero', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Status</label>
+              <select className="select" value={form.status} onChange={e => set('status', e.target.value)}>
+                <option value="rascunho">Rascunho</option>
+                <option value="emitido">Emitido</option>
+                <option value="recebido">Recebido</option>
+                <option value="cancelado">Cancelado</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Fornecedor</label>
+            <select className="select" value={form.fornecedor_id} onChange={e => set('fornecedor_id', e.target.value)}>
+              <option value="">Selecione...</option>
+              {fornecedores.map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Classe Orçamentária</label>
+            <select className="select" value={form.orcamento_id} onChange={e => set('orcamento_id', e.target.value)}>
+              <option value="">Selecione...</option>
+              {orcamento.map(o => <option key={o.id} value={o.id}>{o.codigo} — {o.descricao} (Saldo: {fmt((o.valor_total || 0) - (o.valor_contratado || 0))})</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Valor Total</label>
+              <input className="input" type="number" value={form.valor_total} onChange={e => set('valor_total', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Data de Emissão</label>
+              <input className="input" type="date" value={form.data_emissao} onChange={e => set('data_emissao', e.target.value)} />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Entrega Prevista</label>
+              <input className="input" type="date" value={form.data_entrega_prevista} onChange={e => set('data_entrega_prevista', e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Número NF</label>
+              <input className="input" value={form.nf_numero} onChange={e => set('nf_numero', e.target.value)} />
+            </div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
+          <button className="btn btn-primary" onClick={() => { onSave(form); onClose() }}>Salvar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function Compras({ data }) {
+  const { tractianSaldo, requisicoes, pedidosCompra, produtos, fornecedores, orcamento, loading, addRequisicao, updateRequisicao, deleteRequisicao, addPedidoCompra, updatePedidoCompra, deletePedidoCompra } = data
+  const [tab, setTab] = useState(0)
+  const [modalRC, setModalRC] = useState(null)
+  const [modalPC, setModalPC] = useState(null)
+  const [err, setErr] = useState('')
+
+  const necessidades = useMemo(() => tractianSaldo.filter(i => (i.saldo_disponivel || 0) <= (i.estoque_minimo || 0)), [tractianSaldo])
+
+  const saveRC = async (form) => {
+    try { if (form.id) await updateRequisicao(form.id, form); else await addRequisicao(form) }
+    catch (e) { setErr(e.message) }
   }
-
-  const emitirPC = async () => {
-    if (!pc.id_fornecedor || !pc.id_produto || !pc.qtd || !pc.preco_unit || !pc.id_orcamento) return showToast('Preencha todos os campos!', 'error')
-    setLoading(true)
-    try {
-      await ops.emitirPC({ id_requisicao: pc.id_requisicao ? Number(pc.id_requisicao) : null, id_fornecedor: Number(pc.id_fornecedor), id_produto: Number(pc.id_produto), qtd: Number(pc.qtd), preco_unit: Number(pc.preco_unit), id_orcamento: Number(pc.id_orcamento) })
-      setPc({ id_requisicao: '', id_fornecedor: '', id_produto: '', qtd: '', preco_unit: '', id_orcamento: '' })
-      showToast('Pedido de Compra emitido! Orçamento reservado.')
-    } catch (e) { showToast(e.message, 'error') }
-    setLoading(false)
+  const savePC = async (form) => {
+    try { if (form.id) await updatePedidoCompra(form.id, form); else await addPedidoCompra(form) }
+    catch (e) { setErr(e.message) }
   }
+  const delRC = async (id) => { if (window.confirm('Excluir esta RC?')) { try { await deleteRequisicao(id) } catch (e) { setErr(e.message) } } }
+  const delPC = async (id) => { if (window.confirm('Excluir este PC?')) { try { await deletePedidoCompra(id) } catch (e) { setErr(e.message) } } }
 
-  const receberNF = async () => {
-    if (!nf.id_pc || !nf.nf) return showToast('Informe o Pedido e a NF!', 'error')
-    setLoading(true)
-    try {
-      const novoCM = await ops.receberMercadoria({ id_pc: Number(nf.id_pc), nf: nf.nf, qtd_recebida: nf.qtd_recebida ? Number(nf.qtd_recebida) : null, preco_real: nf.preco_real ? Number(nf.preco_real) : null })
-      setNf({ id_pc: '', nf: '', qtd_recebida: '', preco_real: '' })
-      showToast(`Recebimento confirmado! Novo CM: ${fmt(novoCM)}`)
-    } catch (e) { showToast(e.message, 'error') }
-    setLoading(false)
-  }
-
-  const selectedPC = nf.id_pc ? pedidos_compra.find(p => p.id === Number(nf.id_pc)) : null
-  const selectedProd = selectedPC ? produtos.find(p => p.id === selectedPC.id_produto) : null
+  if (loading) return <div className="empty-state"><p>Carregando...</p></div>
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Tabs active={tab} onChange={setTab} tabs={[
-        { id: 'requisicoes', label: 'Requisições (RC)' },
-        { id: 'pedidos', label: 'Pedidos de Compra (PC)' },
-        { id: 'recebimento', label: 'Recebimento de Mercadoria' },
-      ]} />
+    <div>
+      {err && <div className="login-error mb-16">{err}</div>}
+      <div className="tabs">
+        {['Necessidade de Compra', 'Requisições (RC)', 'Pedidos de Compra (PC)'].map((t, i) => (
+          <button key={i} className={`tab ${tab === i ? 'tab-active' : ''}`} onClick={() => setTab(i)}>{t}</button>
+        ))}
+      </div>
 
-      {tab === 'requisicoes' && (<>
-        <Card title="Nova Requisição de Compra">
-          <Grid>
-            <Input label="Produto *" value={rc.id_produto} onChange={v => setRc({ ...rc, id_produto: v })} options={produtos.map(p => ({ value: p.id, label: `${p.sku} – ${p.descricao}` }))} />
-            <Input label="Quantidade *" value={rc.qtd} onChange={v => setRc({ ...rc, qtd: v })} type="number" min="1" />
-            <Input label="Solicitante *" value={rc.solicitante} onChange={v => setRc({ ...rc, solicitante: v })} placeholder="Departamento ou nome" />
-            <Input label="Justificativa" value={rc.justificativa} onChange={v => setRc({ ...rc, justificativa: v })} placeholder="Motivo da solicitação" />
-          </Grid>
-          <div style={{ marginTop: 14 }}><Btn onClick={emitirRC} disabled={loading}>📝 Emitir Requisição</Btn></div>
-        </Card>
-        <Card title="Requisições">
-          <DataTable
-            headers={['ID', 'Produto', 'Qtd', 'Solicitante', 'Data', 'Status', 'Justificativa']}
-            rows={requisicoes.map(r => {
-              const p = produtos.find(x => x.id === r.id_produto)
-              return [`RC-${String(r.id).padStart(4,'0')}`, p?.descricao || '-', fmtN(r.qtd, 0), r.solicitante, fmtDate(r.data || r.created_at), <Badge key={r.id} status={r.status} />, <span key={r.id} style={{ fontSize: 11, color: '#64748b' }}>{r.justificativa}</span>]
-            })}
-          />
-        </Card>
-      </>)}
-
-      {tab === 'pedidos' && (<>
-        <Card title="Emitir Pedido de Compra">
-          <div style={{ background: '#f59e0b10', border: '1px solid #f59e0b30', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#fbbf24' }}>
-            ⚠️ O sistema valida o saldo orçamentário antes de emitir o pedido e reserva o valor automaticamente.
-          </div>
-          <Grid cols={3}>
-            <Input label="Vinc. Requisição (RC)" value={pc.id_requisicao} onChange={v => setPc({ ...pc, id_requisicao: v })} options={requisicoes.filter(r => r.status === 'ABERTA').map(r => ({ value: r.id, label: `RC-${String(r.id).padStart(4,'0')} – ${produtos.find(p=>p.id===r.id_produto)?.descricao}` }))} />
-            <Input label="Fornecedor *" value={pc.id_fornecedor} onChange={v => setPc({ ...pc, id_fornecedor: v })} options={fornecedores.map(f => ({ value: f.id, label: f.nome }))} />
-            <Input label="Produto *" value={pc.id_produto} onChange={v => setPc({ ...pc, id_produto: v })} options={produtos.map(p => ({ value: p.id, label: `${p.sku} – ${p.descricao}` }))} />
-            <Input label="Quantidade *" value={pc.qtd} onChange={v => setPc({ ...pc, qtd: v })} type="number" min="1" />
-            <Input label="Preço Unitário (R$) *" value={pc.preco_unit} onChange={v => setPc({ ...pc, preco_unit: v })} type="number" min="0.01" step="0.01" />
-            <Input label="Classe Orçamentária *" value={pc.id_orcamento} onChange={v => setPc({ ...pc, id_orcamento: v })} options={orcamento.map(o => ({ value: o.id, label: `${o.classe} – ${o.descricao} (Saldo: ${fmt(calcSaldoOrc(o))})` }))} />
-          </Grid>
-          {pc.qtd && pc.preco_unit && (
-            <div style={{ background: '#0f172a', borderRadius: 8, padding: '10px 14px', marginTop: 12, fontSize: 13 }}>
-              Valor Total: <b style={{ color: '#60a5fa' }}>{fmt(Number(pc.qtd) * Number(pc.preco_unit))}</b>
-            </div>
-          )}
-          <div style={{ marginTop: 14 }}><Btn onClick={emitirPC} disabled={loading}>🛒 Emitir Pedido de Compra</Btn></div>
-        </Card>
-        <Card title="Pedidos de Compra">
-          <DataTable
-            headers={['PC', 'Fornecedor', 'Produto', 'Qtd', 'Preço Unit.', 'Total', 'Classe', 'Data', 'Status', 'NF']}
-            rows={pedidos_compra.map(p => {
-              const f = fornecedores.find(x => x.id === p.id_fornecedor)
-              const pr = produtos.find(x => x.id === p.id_produto)
-              const o = orcamento.find(x => x.id === p.id_orcamento)
-              return [`PC-${String(p.id).padStart(4,'0')}`, f?.nome || '-', pr?.descricao || '-', fmtN(p.qtd, 0), fmt(p.preco_unit), fmt(p.qtd * p.preco_unit), o?.classe || '-', fmtDate(p.data || p.created_at), <Badge key={p.id} status={p.status} />, p.nf || <span key={p.id} style={{ color: '#475569' }}>—</span>]
-            })}
-          />
-        </Card>
-      </>)}
-
-      {tab === 'recebimento' && (
-        <Card title="Registrar Recebimento de Mercadoria">
-          <div style={{ background: '#3b82f610', border: '1px solid #3b82f630', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#60a5fa' }}>
-            📋 O recebimento atualiza o custo médio ponderado, saldo em estoque e executa o orçamento automaticamente.
-          </div>
-          <Grid>
-            <Input label="Pedido de Compra *" value={nf.id_pc} onChange={v => setNf({ ...nf, id_pc: v })} options={pedidos_compra.filter(p => p.status === 'AGUARDANDO_ENTREGA').map(p => ({ value: p.id, label: `PC-${String(p.id).padStart(4,'0')} – ${produtos.find(x=>x.id===p.id_produto)?.descricao}` }))} />
-            <Input label="Número da Nota Fiscal *" value={nf.nf} onChange={v => setNf({ ...nf, nf: v })} placeholder="NF-XXXXX" />
-            <Input label="Qtd Recebida (opcional)" value={nf.qtd_recebida} onChange={v => setNf({ ...nf, qtd_recebida: v })} type="number" min="0.001" placeholder="Padrão: qtd do PC" />
-            <Input label="Preço Real (opcional)" value={nf.preco_real} onChange={v => setNf({ ...nf, preco_real: v })} type="number" min="0.01" step="0.01" placeholder="Padrão: preço do PC" />
-          </Grid>
-          {selectedPC && selectedProd && (
-            <div style={{ background: '#0f172a', borderRadius: 8, padding: '12px 14px', marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, fontSize: 12 }}>
-              <div>Produto: <b style={{ color: '#e2e8f0' }}>{selectedProd.descricao}</b></div>
-              <div>CM Atual: <b style={{ color: '#94a3b8' }}>{fmt(selectedProd.custo_medio)}</b></div>
-              <div>Qtd PC: <b style={{ color: '#60a5fa' }}>{fmtN(selectedPC.qtd, 0)}</b></div>
-            </div>
-          )}
-          <div style={{ marginTop: 14 }}><Btn onClick={receberNF} disabled={loading}>📥 Confirmar Recebimento</Btn></div>
-        </Card>
+      {tab === 0 && (
+        <div className="card">
+          <div className="section-title">Itens Abaixo do Estoque Mínimo ({necessidades.length})</div>
+          {necessidades.length === 0
+            ? <div className="empty-state"><p>Todos os itens estão acima do mínimo.</p></div>
+            : (
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead><tr><th>Código</th><th>Nome</th><th>Armazém</th><th>Disponível</th><th>Mínimo</th><th>Máximo</th><th>Sugestão</th><th></th></tr></thead>
+                  <tbody>
+                    {necessidades.map(i => (
+                      <tr key={i.codigo_produto + (i.armazem || '')}>
+                        <td className="font-mono">{i.codigo_produto}</td>
+                        <td>{i.nome_produto}</td>
+                        <td>{i.armazem || '—'}</td>
+                        <td className="text-right">{i.saldo_disponivel}</td>
+                        <td className="text-right">{i.estoque_minimo}</td>
+                        <td className="text-right">{i.estoque_maximo}</td>
+                        <td className="text-right">{Math.max(0, (i.estoque_maximo || 0) - (i.saldo_disponivel || 0))}</td>
+                        <td>
+                          <button className="btn btn-primary btn-xs" onClick={() => { setTab(1); setModalRC({ quantidade: Math.max(0, (i.estoque_maximo || 0) - (i.saldo_disponivel || 0)), justificativa: `Reposição: ${i.nome_produto}`, status: 'rascunho' }) }}>
+                            Criar RC
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
       )}
+
+      {tab === 1 && (
+        <div className="card">
+          <div className="page-header" style={{ marginBottom: 16 }}>
+            <div className="section-title">Requisições de Compra</div>
+            <button className="btn btn-primary btn-sm" onClick={() => setModalRC({})}>+ Nova RC</button>
+          </div>
+          {requisicoes.length === 0
+            ? <div className="empty-state"><p>Nenhuma RC cadastrada.</p></div>
+            : (
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead><tr><th>Produto</th><th>Qtd</th><th>Status</th><th>Justificativa</th><th>Data</th><th></th></tr></thead>
+                  <tbody>
+                    {requisicoes.map(r => {
+                      const prod = produtos.find(p => p.id === r.produto_id)
+                      return (
+                        <tr key={r.id}>
+                          <td>{prod ? prod.descricao : r.produto_id || '—'}</td>
+                          <td>{r.quantidade}</td>
+                          <td><StatusBadge status={r.status} /></td>
+                          <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.justificativa || '—'}</td>
+                          <td>{fmtDate(r.created_at)}</td>
+                          <td><div className="actions">
+                            <button className="btn btn-secondary btn-xs" onClick={() => setModalRC(r)}>Editar</button>
+                            <button className="btn btn-danger btn-xs" onClick={() => delRC(r.id)}>Excluir</button>
+                          </div></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
+
+      {tab === 2 && (
+        <div className="card">
+          <div className="page-header" style={{ marginBottom: 16 }}>
+            <div className="section-title">Pedidos de Compra</div>
+            <button className="btn btn-primary btn-sm" onClick={() => setModalPC({})}>+ Novo PC</button>
+          </div>
+          {pedidosCompra.length === 0
+            ? <div className="empty-state"><p>Nenhum PC cadastrado.</p></div>
+            : (
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead><tr><th>Número</th><th>Fornecedor</th><th>Classe Orç.</th><th>Status</th><th>Valor Total</th><th>Emissão</th><th>Entrega Prev.</th><th>NF</th><th></th></tr></thead>
+                  <tbody>
+                    {pedidosCompra.map(pc => {
+                      const forn = fornecedores.find(f => f.id === pc.fornecedor_id)
+                      const orc = orcamento.find(o => o.id === pc.orcamento_id)
+                      return (
+                        <tr key={pc.id}>
+                          <td className="font-mono">{pc.numero || '—'}</td>
+                          <td>{forn ? forn.razao_social : '—'}</td>
+                          <td>{orc ? orc.descricao : '—'}</td>
+                          <td><StatusBadge status={pc.status} /></td>
+                          <td>{fmt(pc.valor_total)}</td>
+                          <td>{fmtDate(pc.data_emissao)}</td>
+                          <td>{fmtDate(pc.data_entrega_prevista)}</td>
+                          <td>{pc.nf_numero || '—'}</td>
+                          <td><div className="actions">
+                            <button className="btn btn-secondary btn-xs" onClick={() => setModalPC(pc)}>Editar</button>
+                            <button className="btn btn-danger btn-xs" onClick={() => delPC(pc.id)}>Cancelar</button>
+                          </div></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
+
+      {modalRC !== null && <ModalRC rc={modalRC.id ? modalRC : null} produtos={produtos} onSave={saveRC} onClose={() => setModalRC(null)} />}
+      {modalPC !== null && <ModalPC pc={modalPC.id ? modalPC : null} fornecedores={fornecedores} orcamento={orcamento} onSave={savePC} onClose={() => setModalPC(null)} />}
     </div>
   )
 }
